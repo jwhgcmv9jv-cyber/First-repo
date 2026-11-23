@@ -1,0 +1,9 @@
+{
+  "name": "Irbis Пульт",
+  "short_name": "Irbis Пульт",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12151b",
+  "theme_color": "#12151b",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

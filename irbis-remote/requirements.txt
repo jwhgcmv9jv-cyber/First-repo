@@ -1,0 +1,4 @@
+# Только для режима --mode local (сервер на OPS-компьютере панели).
+# Для режима --mode adb ничего ставить не нужно — только adb (Android Platform Tools).
+pyautogui>=0.9.54
+pyperclip>=1.8.2
