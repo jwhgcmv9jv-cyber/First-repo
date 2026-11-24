@@ -603,6 +603,10 @@ public class MainActivity extends Activity {
                     cm.setPrimaryClip(ClipData.newPlainText("usb", info));
                     toast("Скопировано");
                 })
+                .setNeutralButton("Тест: Громк.+", (d, w) -> {
+                    sendKey(KEYS.get("vol_up"));
+                    toast("Отправлено. Через 3 сек откройте диагностику снова — внизу будет журнал");
+                })
                 .setNegativeButton("Закрыть", null)
                 .show();
         refreshStatus();
