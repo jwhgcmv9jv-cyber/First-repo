@@ -1,0 +1,51 @@
+name: Сборка Irbis ИК-пульт (APK)
+
+on:
+  push:
+    paths:
+      - 'irbis-ir-android/**'
+      - '.github/workflows/android-ir.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Сборка APK
+        working-directory: irbis-ir-android
+        run: gradle --no-daemon assembleDebug
+
+      - name: Переименовать
+        run: cp irbis-ir-android/app/build/outputs/apk/debug/app-debug.apk irbis-ir-remote.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: irbis-ir-remote
+          path: irbis-ir-remote.apk
+
+      - name: Опубликовать в Releases (прямая ссылка на APK)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete irbis-ir-latest --yes --cleanup-tag || true
+          gh release create irbis-ir-latest irbis-ir-remote.apk \
+            --target "${{ github.sha }}" \
+            --title "Irbis ИК-пульт (Android)" \
+            --notes "Установите irbis-ir-remote.apk на Android-телефон с ИК-портом." \
+            --prerelease

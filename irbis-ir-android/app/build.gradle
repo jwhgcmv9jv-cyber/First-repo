@@ -1,0 +1,21 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ru.irbis.irremote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ru.irbis.irremote'
+        minSdk 19          // ConsumerIrManager появился в Android 4.4
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
