@@ -2,6 +2,13 @@ package ru.irbis.irremote;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Intent;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
+import android.os.Build;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -77,6 +84,9 @@ public class MainActivity extends Activity {
             TEXT = 0xFFE8ECF2, MUTED = 0xFF8B95A5, ACCENT = 0xFFE0612B, RED = 0xFF8A2A2A, OK_GREEN = 0xFF2FA36B;
 
     private ConsumerIrManager ir;
+    private UsbManager usbm;
+    private UsbIr usbIr;
+    static final String ACTION_USB_PERMISSION = "ru.irbis.irremote.USB_PERMISSION";
     private SharedPreferences prefs;
     private final ExecutorService sender = Executors.newSingleThreadExecutor();
     private final AtomicBoolean busy = new AtomicBoolean(false);
@@ -87,6 +97,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ir = (ConsumerIrManager) getSystemService(Context.CONSUMER_IR_SERVICE);
+        usbm = (UsbManager) getSystemService(Context.USB_SERVICE);
         prefs = getSharedPreferences("irbis", MODE_PRIVATE);
         getWindow().getDecorView().setBackgroundColor(BG);
         setContentView(buildUi());
@@ -94,14 +105,34 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (status != null) refreshStatus();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         sender.shutdownNow();
+        if (usbIr != null) usbIr.close();
     }
 
     // ------------------------------------------------------------ ИК
-    boolean hasIr() {
+    boolean hasBuiltinIr() {
         try { return ir != null && ir.hasIrEmitter(); } catch (Exception e) { return false; }
+    }
+
+    UsbDevice usbAdapter() {
+        try { return UsbIr.find(usbm); } catch (Exception e) { return null; }
+    }
+
+    /** Есть ли чем передавать: встроенный ИК или USB‑адаптер. */
+    boolean hasIr() { return hasBuiltinIr() || usbAdapter() != null; }
+
+    void requestUsbPermission(UsbDevice d) {
+        Intent i = new Intent(ACTION_USB_PERMISSION).setPackage(getPackageName());
+        int flags = Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0;
+        usbm.requestPermission(d, PendingIntent.getBroadcast(this, 0, i, flags));
     }
 
     int address() { return prefs.getInt("addr", DEFAULT_ADDRESS); }
@@ -110,15 +141,32 @@ public class MainActivity extends Activity {
 
     /** Отправить один кадр. Если предыдущий ещё передаётся — пропустить (не копим очередь). */
     void transmit(final long code) {
-        if (!hasIr()) {
-            toast("На этом телефоне нет ИК‑передатчика");
-            return;
+        final boolean builtin = hasBuiltinIr();
+        UsbIr usbTx = null;
+        if (!builtin) {
+            UsbDevice d = usbAdapter();
+            if (d == null) {
+                toast("Нет ИК: ни встроенного, ни USB‑адаптера");
+                return;
+            }
+            if (!usbm.hasPermission(d)) {
+                requestUsbPermission(d);
+                toast("Разрешите доступ к ИК‑адаптеру и нажмите кнопку ещё раз");
+                return;
+            }
+            if (usbIr == null || !usbIr.device().equals(d)) {
+                if (usbIr != null) usbIr.close();
+                usbIr = new UsbIr(usbm, d);
+            }
+            usbTx = usbIr;
         }
         if (!busy.compareAndSet(false, true)) return;
+        final UsbIr tx = usbTx;
         sender.execute(new Runnable() {
             @Override public void run() {
                 try {
-                    ir.transmit(Nec.CARRIER, Nec.frame(code));
+                    if (builtin) ir.transmit(Nec.CARRIER, Nec.frame(code));
+                    else tx.transmit(Nec.frame(code));
                 } catch (final Exception e) {
                     ui.post(new Runnable() { @Override public void run() { toast("Ошибка ИК: " + e.getMessage()); } });
                 } finally {
@@ -198,6 +246,8 @@ public class MainActivity extends Activity {
         root.addView(row(
                 actionBtn("Коды кнопок", new View.OnClickListener() { @Override public void onClick(View v) { showSettings(); } }),
                 actionBtn("Справка", new View.OnClickListener() { @Override public void onClick(View v) { showHelp(); } })));
+        root.addView(row(
+                actionBtn("USB‑диагностика", new View.OnClickListener() { @Override public void onClick(View v) { showUsbInfo(); } })));
         return scroll;
     }
 
@@ -276,12 +326,18 @@ public class MainActivity extends Activity {
     }
 
     void refreshStatus() {
-        if (hasIr()) {
+        UsbDevice d = hasBuiltinIr() ? null : usbAdapter();
+        if (hasBuiltinIr()) {
             status.setTextColor(OK_GREEN);
-            status.setText("● ИК‑передатчик есть · адрес " + Nec.hex(address(), 4) + " · направьте телефон на доску");
+            status.setText("● Встроенный ИК · адрес " + Nec.hex(address(), 4) + " · направьте телефон на доску");
+        } else if (d != null) {
+            status.setTextColor(OK_GREEN);
+            status.setText(String.format("● USB ИК‑адаптер %04X:%04X%s · адрес %s · направьте адаптер на доску",
+                    d.getVendorId(), d.getProductId(), UsbIr.isKnown(d) ? "" : " (неизвестный — пробуем)",
+                    Nec.hex(address(), 4)));
         } else {
             status.setTextColor(0xFFD64545);
-            status.setText("● На этом телефоне нет ИК‑передатчика — приложение не сможет управлять доской");
+            status.setText("● ИК не найден: нет встроенного ИК и не вставлен USB‑адаптер");
         }
     }
 
@@ -530,12 +586,35 @@ public class MainActivity extends Activity {
         }.show();
     }
 
+    void showUsbInfo() {
+        final String info = UsbIr.describeAll(usbm);
+        TextView t = new TextView(this);
+        t.setText(info);
+        t.setTextIsSelectable(true);
+        t.setTypeface(Typeface.MONOSPACE);
+        t.setPadding(dp(20), dp(12), dp(20), dp(12));
+        ScrollView sv = new ScrollView(this);
+        sv.addView(t);
+        new AlertDialog.Builder(this)
+                .setTitle("USB‑устройства")
+                .setView(sv)
+                .setPositiveButton("Копировать", (d, w) -> {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("usb", info));
+                    toast("Скопировано");
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
+        refreshStatus();
+    }
+
     void showHelp() {
         new AlertDialog.Builder(this)
                 .setTitle("Справка")
                 .setMessage(
-                        "1. Нужен телефон с ИК‑передатчиком (Xiaomi/Redmi/POCO, некоторые Honor/Huawei/Realme). " +
-                        "Направьте верх телефона на приёмник доски (обычно внизу рамки), расстояние до 5–7 м.\n\n" +
+                        "1. Нужен встроенный ИК (Xiaomi/Redmi/POCO и др.) или USB‑C ИК‑адаптер (для Samsung и др.). " +
+                        "Направьте ИК на приёмник доски (обычно внизу рамки), расстояние до 5–7 м. " +
+                        "Поддержка USB‑адаптеров экспериментальная: если не работает — «USB‑диагностика» → «Копировать» и пришлите текст.\n\n" +
                         "2. Коды по умолчанию — Irbis/Promethean (NEC, адрес 0x807F) из базы IrCode Finder. " +
                         "На вашей модели они могут отличаться.\n\n" +
                         "3. Если доска не реагирует — «Подбор адреса»: выберите «Громк. +», смотрите на доску; " +
