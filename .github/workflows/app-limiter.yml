@@ -1,0 +1,41 @@
+name: Сборка AppLimiter (Windows)
+
+on:
+  push:
+    paths:
+      - 'app-limiter/**'
+      - '.github/workflows/app-limiter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Сборка AppLimiter.exe
+        run: dotnet publish app-limiter/src/AppLimiter.csproj -c Release -o out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppLimiter
+          path: out/AppLimiter.exe
+
+      - name: Опубликовать в Releases (прямая ссылка на exe)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete app-limiter-latest --yes --cleanup-tag || true
+          gh release create app-limiter-latest out/AppLimiter.exe \
+            --target "${{ github.sha }}" \
+            --title "AppLimiter (Windows 10/11)" \
+            --notes "Скачайте AppLimiter.exe и запустите от имени администратора." \
+            --prerelease
